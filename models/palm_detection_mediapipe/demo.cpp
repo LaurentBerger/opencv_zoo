@@ -15,28 +15,15 @@ vector< pair<dnn::Backend, dnn::Target> > backendTargetPairs = {
         std::make_pair<dnn::Backend, dnn::Target>(dnn::DNN_BACKEND_TIMVX, dnn::DNN_TARGET_NPU),
         std::make_pair<dnn::Backend, dnn::Target>(dnn::DNN_BACKEND_CANN, dnn::DNN_TARGET_NPU) };
 
-vector<string> labelYolox = {
-        "person", "bicycle", "car", "motorcycle", "airplane", "bus",
-        "train", "truck", "boat", "traffic light", "fire hydrant",
-        "stop sign", "parking meter", "bench", "bird", "cat", "dog",
-        "horse", "sheep", "cow", "elephant", "bear", "zebra", "giraffe",
-        "backpack", "umbrella", "handbag", "tie", "suitcase", "frisbee",
-        "skis", "snowboard", "sports ball", "kite", "baseball bat",
-        "baseball glove", "skateboard", "surfboard", "tennis racket",
-        "bottle", "wine glass", "cup", "fork", "knife", "spoon", "bowl",
-        "banana", "apple", "sandwich", "orange", "broccoli", "carrot",
-        "hot dog", "pizza", "donut", "cake", "chair", "couch",
-        "potted plant", "bed", "dining table", "toilet", "tv", "laptop",
-        "mouse", "remote", "keyboard", "cell phone", "microwave",
-        "oven", "toaster", "sink", "refrigerator", "book", "clock",
-        "vase", "scissors", "teddy bear", "hair drier", "toothbrush" };
 
 class PalmDetection {
 private:
     Net net;
     string modelPath;
     Size inputSize;
-    float confThreshold;
+    Size originalSize;
+    Image2BlobParams paramMediapipe;
+    float scoreThreshold;
     float nmsThreshold;
     float topK;
     dnn::Backend backendId;
@@ -45,11 +32,12 @@ private:
     Mat anchors;
 
 public:
-	PalmDetection(string modPath, float confThresh = 0.35, float nmsThresh = 0.5, float topkVal = 0.5, dnn::Backend bId = DNN_BACKEND_DEFAULT, dnn::Target tId = DNN_TARGET_CPU) :
-        modelPath(modPath), confThreshold(confThresh),
+	PalmDetection(string modPath, float scoreThresh = 0.35, float nmsThresh = 0.5, float topkVal = 0.5, dnn::Backend bId = DNN_BACKEND_DEFAULT, dnn::Target tId = DNN_TARGET_CPU) :
+        modelPath(modPath), scoreThreshold(scoreThresh),
         nmsThreshold(nmsThresh), topK(topkVal),
         backendId(bId), targetId(tId)
     {
+        samples::addSamplesDataSearchPath("c:/lib/opencv_zoo/models/palm_detection_mediapipe/");
         this->net = readNet(samples::findFile(this->modelPath));
         this->inputSize = Size(192, 192);
         this->net.setPreferableBackend(this->backendId);
@@ -68,15 +56,15 @@ public:
     Mat preprocess(Mat img)
     {
         Mat blob;
-        Image2BlobParams paramMediapipe;
-        paramMediapipe.datalayout = DNN_LAYOUT_NHWC;
-        paramMediapipe.paddingmode = DNN_PMODE_LETTERBOX;
-        paramMediapipe.ddepth = CV_32F;
-		paramMediapipe.mean = Scalar::all(0);
-		paramMediapipe.scalefactor = Scalar::all(1);
-		paramMediapipe.size = Size(img.cols, img.rows);
-		paramMediapipe.swapRB = true;
-
+       
+        this->paramMediapipe.datalayout = DNN_LAYOUT_NHWC;
+        this->paramMediapipe.paddingmode = DNN_PMODE_LETTERBOX;
+        this->paramMediapipe.ddepth = CV_32F;
+        this->paramMediapipe.mean = Scalar::all(0);
+        this->paramMediapipe.scalefactor = Scalar::all(1/255.0);
+        this->paramMediapipe.size = this->inputSize;
+        this->paramMediapipe.swapRB = true;
+        this->originalSize = img.size();
         blob = blobFromImageWithParams(img, paramMediapipe);
         return blob;
     }
@@ -89,15 +77,112 @@ public:
         vector<Mat> outs;
         this->net.forward(outs, this->net.getUnconnectedOutLayersNames());
 
-        Mat predictions = this->postprocess(outs[0]);
+        Mat predictions = this->postprocess(outs);
         return predictions;
     }
+/**
+       score = output_blob[1][0, :, 0]                    Mat score = outputs[1].reshape(0, outputs[1].size[0]);
+       box_delta = output_blob[0][0, :, 0 : 4]            Mat boxLandDelta = outputs[0].reshape(outputs[0].size[0], outputs[0].size[1]);
+       landmark_delta = output_blob[0][0, :, 4 : ]        Mat boxDelta = boxLandDelta.colRange(0, 4);
+                                                          Mat landmarkDelta = boxLandDelta.colRange(4, boxLandDelta.cols);
 
-    Mat postprocess(Mat outputs)
+
+               Mat score = outputs[1].reshape(0, outputs[1].size[0]);
+       
+ */
+    Mat postprocess(vector<Mat> outputs)
     {
         Mat scores;
+        Mat boxAndlandmarkDelta;
+        Mat boxDelta;
+        Mat landMarkDelta;
+        double scale = max(originalSize.width, originalSize.height);
+        scores = outputs[1].reshape(0, outputs[1].size[0]);       // score = output_blob[1][0, :, 0]
 
-        return Mat();
+        boxAndlandmarkDelta = outputs[0].reshape(outputs[0].size[0], outputs[0].size[1]);    // box_delta = output_blob[0][0, :, 0 : 4]
+        boxDelta = boxAndlandmarkDelta.colRange(0, 4);
+        landMarkDelta = boxAndlandmarkDelta.colRange(4, boxAndlandmarkDelta.cols);
+        // get scores score = score.astype(np.float64) score = 1 / (1 + np.exp(-score))
+        exp(-scores, scores);
+        Mat deno = 1 + scores; ;
+        divide(1.0, deno, scores);
+        // get boxes
+/*
+           # get boxes
+            cxy_delta = box_delta[:, : 2] / self.input_size
+            wh_delta = box_delta[:, 2 : ] / self.input_size
+            xy1 = (cxy_delta - wh_delta / 2 + self.anchors) * scale
+            xy2 = (cxy_delta + wh_delta / 2 + self.anchors) * scale
+            boxes = np.concatenate([xy1, xy2], axis = 1)
+            boxes -= [pad_bias[0], pad_bias[1], pad_bias[0], pad_bias[1]]
+            # NMS
+            keep_idx = cv.dnn.NMSBoxes(boxes, score, self.score_threshold, self.nms_threshold, top_k = self.topK)
+            if len(keep_idx) == 0:
+        return np.empty(shape = (0, 19))
+*/
+        vector<Rect> rBox(boxDelta.rows), rImg;
+        Mat tl, dimRect;
+/*         boxDelta.col(0) = boxDelta.col(0) / this->inputSize.width;
+        boxDelta.col(1) = boxDelta.col(1) / this->inputSize.height;
+        boxDelta.col(2) = boxDelta.col(2) / this->inputSize.width;
+        boxDelta.col(3) = boxDelta.col(3) / this->inputSize.height;
+        
+       boxDelta.col(0) = (boxDelta.col(0) - boxDelta.col(2) / 2 + this->anchors.col(0));
+        boxDelta.col(1) = (boxDelta.col(1) - boxDelta.col(3) / 2 + this->anchors.col(1));
+        boxDelta.col(2) = (boxDelta.col(0) + boxDelta.col(2) / 2 + this->anchors.col(0));
+        boxDelta.col(3) = (boxDelta.col(1) + boxDelta.col(3) / 2 + this->anchors.col(1));*/
+ 
+        for (int row = 0; row < boxDelta.rows; row++)
+        {
+            Rect r(boxDelta.at<float>(row, 0) - boxDelta.at<float>(row, 2) / 2 + this->anchors.at<float>(row, 0) * this->inputSize.width, 
+                   boxDelta.at<float>(row, 1) - boxDelta.at<float>(row, 3) / 2 + this->anchors.at<float>(row, 1) * this->inputSize.height,
+                   boxDelta.at<float>(row, 2),
+                   boxDelta.at<float>(row, 3));
+            rBox[row] = r;
+        }   
+        blobRectsToImageRects(rBox, rImg, this->originalSize, this->paramMediapipe);
+        vector< int > keep;
+        NMSBoxes(rBox, scores, this->scoreThreshold, this->nmsThreshold, keep, 1.0f, this->topK);
+        if (keep.size() == 0)
+            return Mat();
+        Mat result(keep.size(), boxDelta.cols + landMarkDelta.cols + 1, CV_32FC1, Scalar::all(0));
+        int row = 0;
+        for (auto idx : keep)
+        {
+            result.at<float>(row, 0) = rImg[idx].x;
+            result.at<float>(row, 1) = rImg[idx].y;
+            result.at<float>(row, 2) = rImg[idx].width;
+            result.at<float>(row, 3) = rImg[idx].height;
+            for (int i = 0; i < landMarkDelta.cols / 2; i++)
+            {
+                Rect r(landMarkDelta.at<float>(idx, 2 * i) + this->anchors.at<float>(idx, 0) * this->inputSize.width,
+                    landMarkDelta.at<float>(idx, 2 * i + 1) + this->anchors.at<float>(idx, 1) * this->inputSize.height,
+                    1, 1);
+                r = blobRectToImageRect(r, this->originalSize, this->paramMediapipe);
+                result.at<float>(row, 4 + 2 * i) = r.x;
+                result.at<float>(row, 4 + 2 * i + 1) = r.y;
+            }
+            result.at<float>(row, boxDelta.cols + landMarkDelta.cols ) = scores.at<float>(idx);
+            row++;
+        }
+        return result;
+ /**           # get scores
+            
+            
+
+            selected_score = score[keep_idx]
+            selected_box = boxes[keep_idx]
+
+            # get landmarks
+            selected_landmarks = landmark_delta[keep_idx].reshape(-1, 7, 2)
+            selected_landmarks = selected_landmarks / self.input_size
+            selected_anchors = self.anchors[keep_idx]
+            for idx, landmark in enumerate(selected_landmarks) :
+                landmark += selected_anchors[idx]
+            selected_landmarks *= scale
+            selected_landmarks -= pad_bias
+            np.c_[selected_box.reshape(-1, 4), selected_landmarks.reshape(-1, 14), selected_score.reshape(-1, 1)]
+*/
         
     }
 
@@ -107,7 +192,7 @@ public:
 
 std::string keys =
 "{ help  h          |                                               | Print help message. }"
-"{ model m          | object_detection_yolox_2022nov.onnx           | Usage: Path to the model, defaults to object_detection_yolox_2022nov.onnx  }"
+"{ model m          | palm_detection_mediapipe_2023feb.onnx         | Usage: Path to the model, defaults to palm_detection_mediapipe_2023feb.onnx  }"
 "{ input i          |                                               | Path to input image or video file. Skip this argument to capture frames from a camera.}"
 "{ confidence       | 0.5                                           | Class confidence }"
 "{ obj              | 0.5                                           | Enter object threshold }"
@@ -122,14 +207,46 @@ std::string keys =
 "4: CANN + NPU}";
 
 
-Mat visualize(Mat dets, Mat srcimg, double letterbox_scale, double fps = -1)
+Mat visualize(Mat dets, Mat srcImg, bool printResults=false, double fps = -1)
 {
-    Mat resImg = srcimg.clone();
+    Mat resImg = srcImg.clone();
 
     if (fps > 0)
         putText(resImg, format("FPS: %.2f", fps), Size(10, 25), FONT_HERSHEY_SIMPLEX, 1, Scalar(0, 0, 255), 2);
 
 
+    for (int row = 0; row < dets.rows; row++)
+    {
+        Mat detsRow = dets.row(row);
+        float score = detsRow.at<float>(dets.cols - 1);
+        Rect palmBox(detsRow.at<float>(0), detsRow.at<float>(1), detsRow.at<float>(2), detsRow.at<float>(3));
+        vector<Point> palmLandmarks(7);
+        for (int i = 0; i < 7; i++)
+        {
+            palmLandmarks[i].x = detsRow.at<float>(4 + 2 * i);
+            palmLandmarks[i].y = detsRow.at<float>(4 + 2 * i + 1);
+        }
+
+        // put score
+        putText(resImg, format("%.4f", score), Point(palmBox.tl() + Point(0, 12)), FONT_HERSHEY_DUPLEX, 0.5, Scalar(0, 255, 0));
+
+        // draw box
+        rectangle(resImg, palmBox, Scalar(0, 255, 0), 2);
+
+        // draw points
+        for (auto pt : palmLandmarks)
+            circle(resImg, pt, 2, Scalar(0, 0, 255), 2);
+
+        // Print results
+        if (printResults)
+        {
+            cout << "-----------palm " << row << " -----------\n";
+            cout << "score: " << score << endl;
+            cout << "palm box: " << palmBox << endl;
+            cout << "Landmarks : " << palmLandmarks << endl;
+        }
+
+    }
     return resImg;
 }
 
@@ -168,7 +285,6 @@ int main(int argc, char** argv)
     if (!cap.isOpened())
         CV_Error(Error::StsError, "Cannot opend video or file");
     Mat frame, inputBlob;
-    double letterboxScale;
 
     static const std::string kWinName = model;
     int nbInference = 0;
@@ -181,13 +297,12 @@ int main(int argc, char** argv)
             waitKey();
             break;
         }
-        Mat inputBlob;
         TickMeter tm;
         tm.start();
-        Mat predictions = modelNet.infer(inputBlob);
+        Mat predictions = modelNet.infer(frame);
         tm.stop();
         cout << "Inference time: " << tm.getTimeMilli() << " ms\n";
-        Mat img = visualize(predictions, frame, letterboxScale, tm.getFPS());
+        Mat img = visualize(predictions, frame, tm.getFPS());
         if (vis)
         {
             imshow(kWinName, img);
