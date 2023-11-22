@@ -70,7 +70,7 @@ public:
     }
 
    Mat infer(Mat srcimg)
-    {
+   {
         Mat inputBlob = this->preprocess(srcimg);
 
         this->net.setInput(inputBlob);
@@ -79,58 +79,27 @@ public:
 
         Mat predictions = this->postprocess(outs);
         return predictions;
-    }
-/**
-       score = output_blob[1][0, :, 0]                    Mat score = outputs[1].reshape(0, outputs[1].size[0]);
-       box_delta = output_blob[0][0, :, 0 : 4]            Mat boxLandDelta = outputs[0].reshape(outputs[0].size[0], outputs[0].size[1]);
-       landmark_delta = output_blob[0][0, :, 4 : ]        Mat boxDelta = boxLandDelta.colRange(0, 4);
-                                                          Mat landmarkDelta = boxLandDelta.colRange(4, boxLandDelta.cols);
+   }
 
-
-               Mat score = outputs[1].reshape(0, outputs[1].size[0]);
-       
- */
-    Mat postprocess(vector<Mat> outputs)
-    {
+   Mat postprocess(vector<Mat> outputs)
+   {
         Mat scores;
         Mat boxAndlandmarkDelta;
         Mat boxDelta;
         Mat landMarkDelta;
         double scale = max(originalSize.width, originalSize.height);
-        scores = outputs[1].reshape(0, outputs[1].size[0]);       // score = output_blob[1][0, :, 0]
+        scores = outputs[1].reshape(0, outputs[1].size[0]);
 
-        boxAndlandmarkDelta = outputs[0].reshape(outputs[0].size[0], outputs[0].size[1]);    // box_delta = output_blob[0][0, :, 0 : 4]
+        boxAndlandmarkDelta = outputs[0].reshape(outputs[0].size[0], outputs[0].size[1]); 
         boxDelta = boxAndlandmarkDelta.colRange(0, 4);
         landMarkDelta = boxAndlandmarkDelta.colRange(4, boxAndlandmarkDelta.cols);
-        // get scores score = score.astype(np.float64) score = 1 / (1 + np.exp(-score))
+        // get scores 
         exp(-scores, scores);
         Mat deno = 1 + scores; ;
         divide(1.0, deno, scores);
         // get boxes
-/*
-           # get boxes
-            cxy_delta = box_delta[:, : 2] / self.input_size
-            wh_delta = box_delta[:, 2 : ] / self.input_size
-            xy1 = (cxy_delta - wh_delta / 2 + self.anchors) * scale
-            xy2 = (cxy_delta + wh_delta / 2 + self.anchors) * scale
-            boxes = np.concatenate([xy1, xy2], axis = 1)
-            boxes -= [pad_bias[0], pad_bias[1], pad_bias[0], pad_bias[1]]
-            # NMS
-            keep_idx = cv.dnn.NMSBoxes(boxes, score, self.score_threshold, self.nms_threshold, top_k = self.topK)
-            if len(keep_idx) == 0:
-        return np.empty(shape = (0, 19))
-*/
         vector<Rect> rBox(boxDelta.rows), rImg;
         Mat tl, dimRect;
-/*         boxDelta.col(0) = boxDelta.col(0) / this->inputSize.width;
-        boxDelta.col(1) = boxDelta.col(1) / this->inputSize.height;
-        boxDelta.col(2) = boxDelta.col(2) / this->inputSize.width;
-        boxDelta.col(3) = boxDelta.col(3) / this->inputSize.height;
-        
-       boxDelta.col(0) = (boxDelta.col(0) - boxDelta.col(2) / 2 + this->anchors.col(0));
-        boxDelta.col(1) = (boxDelta.col(1) - boxDelta.col(3) / 2 + this->anchors.col(1));
-        boxDelta.col(2) = (boxDelta.col(0) + boxDelta.col(2) / 2 + this->anchors.col(0));
-        boxDelta.col(3) = (boxDelta.col(1) + boxDelta.col(3) / 2 + this->anchors.col(1));*/
  
         for (int row = 0; row < boxDelta.rows; row++)
         {
@@ -166,25 +135,7 @@ public:
             row++;
         }
         return result;
- /**           # get scores
-            
-            
-
-            selected_score = score[keep_idx]
-            selected_box = boxes[keep_idx]
-
-            # get landmarks
-            selected_landmarks = landmark_delta[keep_idx].reshape(-1, 7, 2)
-            selected_landmarks = selected_landmarks / self.input_size
-            selected_anchors = self.anchors[keep_idx]
-            for idx, landmark in enumerate(selected_landmarks) :
-                landmark += selected_anchors[idx]
-            selected_landmarks *= scale
-            selected_landmarks -= pad_bias
-            np.c_[selected_box.reshape(-1, 4), selected_landmarks.reshape(-1, 14), selected_score.reshape(-1, 1)]
-*/
-        
-    }
+   }
 
 
     void generateAnchors();
