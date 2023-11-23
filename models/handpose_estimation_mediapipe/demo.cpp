@@ -53,49 +53,59 @@ public:
         this->net.setPreferableTarget(this->targetId);
     }
 
-    tuple<Mat, Mat, vector<int>> cropAndPadFromPalm(Mat image, vector<Point> palmBbox, bool forRotation=false)
+    tuple<Mat, Mat, Mat> cropAndPadFromPalm(Mat image, Mat palmBbox, bool forRotation=false)
     {
     // shift bounding box
-        Point2f whPalmBbox = palmBbox[1] - palmBbox[0];
-        Point2f shiftVector;
+        Mat whPalmBbox = palmBbox.row(1) - palmBbox.row(0);
+        Mat shiftVector;
+        float enlargeScale;
         if (forRotation)
-            shiftVector = this->palmBoxPreShiftVector;
+            shiftVector = Mat(this->palmBoxPreShiftVector);
         else
-            shiftVector = this->palmBoxShiftVector;
-        shiftVector = Point(shiftVector.x * whPalmBbox.x, shiftVector.y * whPalmBbox.y);
-        palm_bbox = palm_bbox + shift_vector
+            shiftVector = Mat(this->palmBoxShiftVector);
+        multiply(shiftVector, whPalmBbox, shiftVector);
+        palmBbox = palmBbox + shiftVector;
         // enlarge bounding box
-            center_palm_bbox = np.sum(palm_bbox, axis = 0) / 2
-            wh_palm_bbox = palm_bbox[1] - palm_bbox[0]
-            if for_rotation:
-        enlarge_scale = self.PALM_BOX_PRE_ENLARGE_FACTOR
-            else:
-        enlarge_scale = self.PALM_BOX_ENLARGE_FACTOR
-            new_half_size = wh_palm_bbox * enlarge_scale / 2
-            palm_bbox = np.array([
-                center_palm_bbox - new_half_size,
-                    center_palm_bbox + new_half_size])
-            palm_bbox = palm_bbox.astype(np.int32)
-                    palm_bbox[:, 0] = np.clip(palm_bbox[:, 0], 0, image.shape[1])
-                    palm_bbox[:, 1] = np.clip(palm_bbox[:, 1], 0, image.shape[0])
-                    # crop to the size of interest
-                    image = image[palm_bbox[0][1]:palm_bbox[1][1], palm_bbox[0][0] : palm_bbox[1][0], : ]
-                    # pad to ensure conner pixels won't be cropped
-                    if for_rotation:
-                side_len = np.linalg.norm(image.shape[:2])
-                    else:
-                side_len = max(image.shape[:2])
+        Mat centerPalmBbox, handBbox;
+        reduce(palmBbox, centerPalmBbox, 1, REDUCE_AVG, CV_32F);
+        whPalmBbox = palmBbox.row(1) - palmBbox.row(0);
+        if (forRotation)
+            enlargeScale = this->palmBoxPreEnlargeFactor;
+        else
+            enlargeScale = this->palmBoxEnlargeFactor;
 
-                    side_len = int(side_len)
-                    pad_h = side_len - image.shape[0]
-                    pad_w = side_len - image.shape[1]
-                    left = pad_w // 2
-                    top = pad_h // 2
-                    right = pad_w - left
-                    bottom = pad_h - top
-                    image = cv.copyMakeBorder(image, top, bottom, left, right, cv.BORDER_CONSTANT, None, (0, 0, 0))
-                    bias = palm_bbox[0] - [left, top]
-                    return image, palm_bbox, bias
+        Mat newHalfSize = whPalmBbox * enlargeScale / 2;
+        vector<Mat> vmat;
+        vmat[0] = centerPalmBbox - newHalfSize;
+        vmat[1] = centerPalmBbox + newHalfSize;
+        hconcat(vmat, handBbox);
+        handBbox.convertTo(palmBbox, CV_32S);
+
+        Mat idx = palmBbox.row(0) < 0;
+        palmBbox.row(0).setTo(0, idx);
+        idx = palmBbox.row(0) >= image.cols;
+        palmBbox.row(0).setTo(image.cols, idx);
+        idx = palmBbox.row(1) < 0;
+        palmBbox.row(1).setTo(0, idx);
+        idx = palmBbox.row(1) >= image.rows;
+        palmBbox.row(1).setTo(image.rows, idx);        // crop to the size of interest
+
+        image = image(Rect(palmBbox.at<int>(0, 0), palmBbox.at<int>(1, 0), palmBbox.at<int>(0, 1) - palmBbox.at<int>(0, 0), palmBbox.at<int>(1, 1) - palmBbox.at<int>(1, 0)));
+        int sideLen;
+        if (forRotation)
+            sideLen = pow(image.rows * image.rows + image.cols * image.cols, 0.5);
+        else
+            sideLen = max(image.rows, image.cols);
+
+        int padH = sideLen - image.rows;
+        int padW = sideLen - image.cols;
+        int left = padW / 2;
+        int top = padH / 2;
+        int right = padW - left;
+        int bottom = padH - top;
+        copyMakeBorder(image, image, top, bottom, left, right, BORDER_CONSTANT, Scalar::all(0));
+        Mat bias = palmBbox.row(0) - Mat(Point(left, top));
+        return tuple<Mat, Mat, Mat>(image, palmBbox, bias);
     }
 
     Mat preprocess(Mat img, Mat palm)
