@@ -416,6 +416,120 @@ public:
     void generateAnchors();
 };
 
+
+
+class GestureClassification
+{
+protected:
+    double vector2Angle(Mat v1, Mat v2)
+    {
+
+        Mat uv1 = v1 / norm(v1);
+        Mat uv2 = v2 / norm(v2);
+        double angle = acos(uv1.dot(uv2)) / _M_PI * 180;
+        return angle;
+    }
+    vector<double> handAngle(Mat hand)
+    {
+        vector<double> angleList;
+        // thumb
+        angleList.push_back(vector2Angle(hand.row(0) - hand.row(2), hand.row(3) - hand.row(4)));
+        // index
+        angleList.push_back(vector2Angle(hand.row(0) - hand.row(6), hand.row(7) - hand.row(8)));
+        // middle
+        angleList.push_back(vector2Angle(hand.row(0) - hand.row(10), hand.row(11) - hand.row(12)));
+        // ring
+        angleList.push_back(vector2Angle(hand.row(0) - hand.row(14), hand.row(15) - hand.row(16)));
+        // pink
+        angleList.push_back(vector2Angle(hand.row(0) - hand.row(18), hand.row(197) - hand.row(20)));
+        return angleList;
+    }
+    vector<bool> fingerStatus(Mat lmList)
+    {
+        vector<bool> fingerList;
+
+        Point origin = lmList.row(0);
+        pair<int, int> keypointList[] = { make_pair(5, 4),make_pair(6, 8),make_pair(10, 12),make_pair(14, 16), make_pair(18, 20) };
+        for (auto ref : keypointList)
+        {
+            Point p1 = lmList.row(ref.first);
+            Point p2 = lmList.row(ref.second);
+            if (norm(p2 - origin) > norm(p1 - origin))
+                fingerList.push_back(true);
+            else
+                fingerList.push_back(false);
+        }
+        return fingerList;
+    }
+
+    string classifyhand(Mat  hand)
+    {
+        double thrAngle = 65.;
+        double thrAngleThumb = 30.;
+        double thrAngleS = 49.;
+        string gestureStr = "Undefined";
+
+        vector<double> angleList = handAngle(hand);
+
+        vector<bool> fgSt = fingerStatus(hand);
+        bool thumbOpen = fgSt[0];
+        bool firstOpen = fgSt[1];
+        bool secondOpen = fgSt[2];
+        bool thirdOpen = fgSt[3];
+        bool fourthOpen = fgSt[4];
+        // Number
+        if ((angleList[0] > thrAngleThumb) && (angleList[1] > thrAngle) && (angleList[2] > thrAngle) && (
+            angleList[3] > thrAngle) && (angleList[4] > thrAngle) &&
+            !firstOpen && !secondOpen && !thirdOpen && !fourthOpen)
+            gestureStr = "Zero";
+        else if ((angleList[0] > thrAngleThumb) && (angleList[1] < thrAngleS) && (angleList[2] > thrAngle) && (
+            angleList[3] > thrAngle) && (angleList[4] > thrAngle) && \
+            firstOpen && !secondOpen && !thirdOpen && !fourthOpen)
+            gestureStr = "One";
+        else if ((angleList[0] > thrAngleThumb) && (angleList[1] < thrAngleS) && (angleList[2] < thrAngleS) && (
+            angleList[3] > thrAngle) && (angleList[4] > thrAngle) && \
+            !thumbOpen && firstOpen && secondOpen && !thirdOpen && !fourthOpen)
+            gestureStr = "Two";
+        else if ((angleList[0] > thrAngleThumb) && (angleList[1] < thrAngleS) && (angleList[2] < thrAngleS) && (
+            angleList[3] < thrAngleS) && (angleList[4] > thrAngle) && \
+            !thumbOpen && firstOpen && secondOpen && thirdOpen && !fourthOpen)
+            gestureStr = "Three";
+        else if ((angleList[0] > thrAngleThumb) && (angleList[1] < thrAngleS) && (angleList[2] < thrAngleS) && (
+                angleList[3] < thrAngleS) && (angleList[4] < thrAngle) && \
+            firstOpen && secondOpen && thirdOpen && fourthOpen)
+            gestureStr = "Four";
+        else if ((angleList[0] < thrAngleS) && (angleList[1] < thrAngleS) && (angleList[2] < thrAngleS) && (
+                angleList[3] < thrAngleS) && (angleList[4] < thrAngleS) && \
+            thumbOpen && firstOpen && secondOpen && thirdOpen && fourthOpen)
+            gestureStr = "Five";
+        else if ((angleList[0] < thrAngleS) && (angleList[1] > thrAngle) && (angleList[2] > thrAngle) && (
+                angleList[3] > thrAngle) && (angleList[4] < thrAngleS) && \
+            thumbOpen &&  !firstOpen &&  !secondOpen &&  !thirdOpen && fourthOpen)
+            gestureStr = "Six";
+        else if ((angleList[0] < thrAngleS) && (angleList[1] < thrAngle) && (angleList[2] > thrAngle) && (
+                angleList[3] > thrAngle) && (angleList[4] > thrAngleS) && \
+            thumbOpen && firstOpen &&  !secondOpen &&  !thirdOpen &&  !fourthOpen)
+            gestureStr = "Seven";
+        else if ((angleList[0] < thrAngleS) && (angleList[1] < thrAngle) && (angleList[2] < thrAngle) && (
+                angleList[3] > thrAngle) && (angleList[4] > thrAngleS) && \
+            thumbOpen && firstOpen && secondOpen &&  !thirdOpen &&  !fourthOpen)
+            gestureStr = "Eight";
+        else if ((angleList[0] < thrAngleS) && (angleList[1] < thrAngle) && (angleList[2] < thrAngle) && (
+                angleList[3] < thrAngle) && (angleList[4] > thrAngleS) && \
+            thumbOpen && firstOpen && secondOpen && thirdOpen &&  !fourthOpen)
+            gestureStr = "Nine";
+
+        return gestureStr;
+    }
+public:
+    string classify(Mat landmarks)
+    {
+        Mat hand = landmarks.rowRange(0, 21).colRange(0, 2);
+        string gesture = this->classifyhand(hand);
+        return gesture;
+    }
+};
+
 std::string keys =
 "{ help  h          |                                               | Print help message. }"
 "{ model m          | handpose_estimation_mediapipe_2023feb.onnx    | Usage: Path to the model, defaults to handpose_estimation_mediapipe_2023feb.onnx  }"
@@ -464,7 +578,28 @@ pair<Mat, Mat> visualize(Mat image, Mat handsPose, float fps = -1)
     putText(display3d, "Left View", Point(0, 212), FONT_HERSHEY_DUPLEX, 0.5, Scalar(0, 0, 255));
     putText(display3d, "Right View", Point(200, 212), FONT_HERSHEY_DUPLEX, 0.5, Scalar(0, 0, 255));
     bool isDraw = false;  // ensure only one person is drawn
+    GestureClassification gc;
 
+    for (int idxHand = 0; idxHand < handsPose.rows; idxHand++)
+    {
+        Mat hand = handsPose.row(idxHand);
+        float conf = hand.at<float>(hand.cols - 1);
+        float handedness = hand.at<float>(hand.cols - 2);
+        string handednessText;
+        if (handedness <= 0.5)
+            handednessText = "Left";
+        else
+            handednessText = "Right";
+        Mat bbox;
+        hand.colRange(0, 4).convertTo(hand, CV_32S);
+        Mat landmarksScreen;
+        hand.colRange(4, 67).convertTo(landmarksScreen, CV_32S);
+        landmarksScreen.reshape(0, 3);
+        Mat landmarksPose;
+        hand.colRange(67, 130).convertTo(landmarksPose, CV_32S);
+        landmarksPose.reshape(0, 3);
+        string gesture = gc.classify(landmarksScreen);
+    }
     return pair<Mat, Mat>(displayScreen, display3d);
 }
 
