@@ -65,9 +65,9 @@ public:
         Mat shiftVector;
         float enlargeScale;
         if (forRotation)
-            shiftVector = this->palmBoxPreShiftVector;
+            this->palmBoxPreShiftVector.copyTo(shiftVector);
         else
-            shiftVector =this->palmBoxShiftVector;
+            this->palmBoxShiftVector.copyTo(shiftVector);
         multiply(shiftVector, whPalmBbox, shiftVector);
         palmBbox.row(1) = palmBbox.row(1) + shiftVector;
         palmBbox.row(0) = palmBbox.row(0) + shiftVector;
@@ -230,7 +230,7 @@ public:
         }
         Mat coordsRotationMatrix = getRotationMatrix2D(Point(0, 0), angle, 1.0);
         coordsRotationMatrix.convertTo(coordsRotationMatrix, CV_32F);
-        Mat rotatedLandmarks = (coordsRotationMatrix.colRange(0, 2) * landMarks.colRange(0, 2).t()).t();
+        Mat rotatedLandmarks = (landMarks.colRange(0, 2) * coordsRotationMatrix.colRange(0, 2));
         hconcat(rotatedLandmarks, landMarks.col(2), rotatedLandmarks);
         Mat rotatedLandmarksWord = (coordsRotationMatrix.colRange(0, 2) * landMarksWord.colRange(0, 2).t()).t();
         hconcat(rotatedLandmarksWord, landMarksWord.col(2), rotatedLandmarksWord);
@@ -373,12 +373,12 @@ public:
         Mat deno = 1 + scores; ;
         divide(1.0, deno, scores);
         // get boxes
-        vector<Rect> rBox(boxDelta.rows), rImg;
+        vector<Rect2d> rBox(boxDelta.rows), rImg;
         Mat tl, dimRect;
  
         for (int row = 0; row < boxDelta.rows; row++)
         {
-            Rect r(boxDelta.at<float>(row, 0) - boxDelta.at<float>(row, 2) / 2 + this->anchors.at<float>(row, 0) * this->inputSize.width, 
+            Rect2d r(boxDelta.at<float>(row, 0) - boxDelta.at<float>(row, 2) / 2 + this->anchors.at<float>(row, 0) * this->inputSize.width, 
                    boxDelta.at<float>(row, 1) - boxDelta.at<float>(row, 3) / 2 + this->anchors.at<float>(row, 1) * this->inputSize.height,
                    boxDelta.at<float>(row, 2),
                    boxDelta.at<float>(row, 3));
@@ -399,7 +399,7 @@ public:
             result.at<float>(row, 3) = rImg[idx].br().y;
             for (int i = 0; i < landMarkDelta.cols / 2; i++)
             {
-                Rect r(landMarkDelta.at<float>(idx, 2 * i) + this->anchors.at<float>(idx, 0) * this->inputSize.width,
+                Rect2d r(landMarkDelta.at<float>(idx, 2 * i) + this->anchors.at<float>(idx, 0) * this->inputSize.width,
                     landMarkDelta.at<float>(idx, 2 * i + 1) + this->anchors.at<float>(idx, 1) * this->inputSize.height,
                     1, 1);
                 r = blobRectToImageRect(r, this->originalSize, this->paramMediapipe);
@@ -423,9 +423,11 @@ class GestureClassification
 protected:
     double vector2Angle(Mat v1, Mat v2)
     {
-
-        Mat uv1 = v1 / norm(v1);
-        Mat uv2 = v2 / norm(v2);
+        Mat v1d, v2d;
+        v1.convertTo(v1d, CV_64F);
+        v2.convertTo(v2d, CV_64F);
+        Mat uv1 = v1d / double(norm(v1));
+        Mat uv2 = v2d / double(norm(v2));
         double angle = acos(uv1.dot(uv2)) / _M_PI * 180;
         return angle;
     }
@@ -441,7 +443,7 @@ protected:
         // ring
         angleList.push_back(vector2Angle(hand.row(0) - hand.row(14), hand.row(15) - hand.row(16)));
         // pink
-        angleList.push_back(vector2Angle(hand.row(0) - hand.row(18), hand.row(197) - hand.row(20)));
+        angleList.push_back(vector2Angle(hand.row(0) - hand.row(18), hand.row(19) - hand.row(20)));
         return angleList;
     }
     vector<bool> fingerStatus(Mat lmList)
@@ -544,30 +546,42 @@ std::string keys =
 "3: TIM-VX + NPU, "
 "4: CANN + NPU}";
 
-void drawLines(Mat image, Mat landmarks, Mat keeplandmarks, bool isDrawPoint = true, int thickness = 2)
+void drawLines(Mat image, Mat landmarks, bool isDrawPoint = true, int thickness = 2)
 {
 
-    vector<pair<int, int>> segment = {
-        make_pair(0, 1), make_pair(1, 2), make_pair(2, 3), make_pair(3, 7),
-        make_pair(0, 4), make_pair(4, 5), make_pair(5, 6), make_pair(6, 8),
-        make_pair(9, 10),
-        make_pair(12, 14), make_pair(14, 16), make_pair(16, 22), make_pair(16, 18), make_pair(16, 20), make_pair(18, 20),
-        make_pair(11, 13), make_pair(13, 15), make_pair(15, 21), make_pair(15, 19), make_pair(15, 17), make_pair(17, 19),
-        make_pair(11, 12), make_pair(11, 23), make_pair(23, 24), make_pair(24, 12),
-        make_pair(24, 26), make_pair(26, 28), make_pair(28, 30), make_pair(28, 32), make_pair(30, 32),
-        make_pair(23, 25), make_pair(25, 27),make_pair(27, 31), make_pair(27, 29), make_pair(29, 31) };
-    for (auto p : segment)
-        if (keeplandmarks.at<uchar>(p.first) && keeplandmarks.at<uchar>(p.second))
-            line(image, Point(landmarks.row(p.first)), Point(landmarks.row(p.second)), Scalar(255, 255, 255), thickness);
+    line(image, Point(landmarks.row(0)), Point(landmarks.row(1)), Scalar(255, 255, 255), thickness);
+    line(image, Point(landmarks.row(1)), Point(landmarks.row(2)), Scalar(255, 255, 255), thickness);
+    line(image, Point(landmarks.row(2)), Point(landmarks.row(3)), Scalar(255, 255, 255), thickness);
+    line(image, Point(landmarks.row(3)), Point(landmarks.row(4)), Scalar(255, 255, 255), thickness);
+
+    line(image, Point(landmarks.row(0)), Point(landmarks.row(5)), Scalar(255, 255, 255), thickness);
+    line(image, Point(landmarks.row(5)), Point(landmarks.row(6)), Scalar(255, 255, 255), thickness);
+    line(image, Point(landmarks.row(6)), Point(landmarks.row(7)), Scalar(255, 255, 255), thickness);
+    line(image, Point(landmarks.row(7)), Point(landmarks.row(8)), Scalar(255, 255, 255), thickness);
+
+    line(image, Point(landmarks.row(0)), Point(landmarks.row(9)), Scalar(255, 255, 255), thickness);
+    line(image, Point(landmarks.row(9)), Point(landmarks.row(10)), Scalar(255, 255, 255), thickness);
+    line(image, Point(landmarks.row(10)), Point(landmarks.row(11)), Scalar(255, 255, 255), thickness);
+    line(image, Point(landmarks.row(11)), Point(landmarks.row(12)), Scalar(255, 255, 255), thickness);
+
+    line(image, Point(landmarks.row(0)), Point(landmarks.row(13)), Scalar(255, 255, 255), thickness);
+    line(image, Point(landmarks.row(13)), Point(landmarks.row(14)), Scalar(255, 255, 255), thickness);
+    line(image, Point(landmarks.row(14)), Point(landmarks.row(15)), Scalar(255, 255, 255), thickness);
+    line(image, Point(landmarks.row(15)), Point(landmarks.row(16)), Scalar(255, 255, 255), thickness);
+
+    line(image, Point(landmarks.row(0)), Point(landmarks.row(17)), Scalar(255, 255, 255), thickness);
+    line(image, Point(landmarks.row(17)), Point(landmarks.row(18)), Scalar(255, 255, 255), thickness);
+    line(image, Point(landmarks.row(18)), Point(landmarks.row(19)), Scalar(255, 255, 255), thickness);
+    line(image, Point(landmarks.row(19)), Point(landmarks.row(20)), Scalar(255, 255, 255), thickness);
+
     if (isDrawPoint)
         for (int idxRow = 0; idxRow < landmarks.rows; idxRow++)
-            if (keeplandmarks.at<uchar>(idxRow))
-                circle(image, Point(landmarks.row(idxRow)), thickness, Scalar(0, 0, 255), -1);
+            circle(image, Point(landmarks.row(idxRow)), thickness, Scalar(0, 0, 255), -1);
 }
 
 
 
-pair<Mat, Mat> visualize(Mat image, Mat handsPose, float fps = -1)
+pair<Mat, Mat> visualize(Mat image, Mat handsPose, bool printResults=false)
 {
     Mat displayScreen = image.clone();
     Mat display3d(400, 400, CV_8UC3, Scalar::all(0));
@@ -591,14 +605,93 @@ pair<Mat, Mat> visualize(Mat image, Mat handsPose, float fps = -1)
         else
             handednessText = "Right";
         Mat bbox;
-        hand.colRange(0, 4).convertTo(hand, CV_32S);
+        hand.colRange(0, 4).convertTo(bbox, CV_32S);
         Mat landmarksScreen;
         hand.colRange(4, 67).convertTo(landmarksScreen, CV_32S);
-        landmarksScreen.reshape(0, 3);
-        Mat landmarksPose;
-        hand.colRange(67, 130).convertTo(landmarksPose, CV_32S);
-        landmarksPose.reshape(0, 3);
+        landmarksScreen = landmarksScreen.reshape(0, 21);
+        Mat landmarksWord;
+        hand.colRange(67, 130).copyTo(landmarksWord);
+        landmarksWord = landmarksWord.reshape(0, 21);
         string gesture = gc.classify(landmarksScreen);
+        if (printResults)
+        {
+            cout << "-----------hand " << idxHand + 1 << "-----------";
+            cout << format("conf %.2f", conf) << endl;
+            cout << "handedness: " << handednessText << endl;
+            cout << "gesture: " << gesture << endl;
+            cout << "hand box: " << bbox << endl;
+            cout << "hand landmarks: \n";
+            for (int idxRow=0; idxRow < landmarksScreen.rows; idxRow++)
+            {
+                cout << landmarksScreen.row(idxRow) << endl;
+            }                
+            cout << "hand world landmarks: \n";
+            for (int idxRow=0; idxRow < landmarksWord.rows; idxRow++)
+            {
+                cout << landmarksWord.row(idxRow) << endl;
+            }
+        }
+        // draw box
+        rectangle(displayScreen, Point(bbox.colRange(0, 2)), Point(bbox.colRange(2, 4)), Scalar(0, 255, 0), 2);
+        // draw handedness
+        putText(displayScreen, handednessText, Point(bbox.colRange(0, 2)) + Point(0, 12), FONT_HERSHEY_DUPLEX, 0.5, Scalar(0, 0, 255));
+        // draw gesture
+        putText(displayScreen, gesture, Point(bbox.colRange(0, 2)) + Point(0, 30), FONT_HERSHEY_DUPLEX, 0.5, Scalar(0, 0, 255));
+        // Draw line between each key points
+        Mat landmarksXY = landmarksScreen.colRange(0, 2);
+        drawLines(displayScreen, landmarksXY, false);
+
+        // z value is relative to WRIST
+        for (int idxRow = 0; idxRow < landmarksScreen.rows; idxRow++)
+        {
+            int r = max(5 - landmarksScreen.at<int>(idxRow, 2) / 5, 0); // 5, 0)
+            r = min(r, 14);
+            circle(displayScreen, Point(landmarksScreen.row(idxRow).colRange(0,2)), r, Scalar(0, 0, 255), -1);
+        }
+
+        if (!isDraw)
+            {
+            isDraw = true;
+            // Main view
+            Mat landmarksXY;
+            landmarksWord.colRange(0, 2).copyTo(landmarksXY);
+            landmarksXY = (landmarksXY * 1000 + 100);
+            landmarksXY.convertTo(landmarksXY, CV_32S);
+            drawLines(display3d, landmarksXY, true, 5);
+
+            // Top view
+            Mat landmarksXZ;
+            hconcat(landmarksWord.col(0), landmarksWord.col(2), landmarksXZ);
+            landmarksXZ.col(1) = -landmarksXZ.col(1);
+            Mat x = landmarksXZ * 1000;
+            x.col(0) += 300;
+            x.col(1) += 100;
+            x.convertTo(landmarksXZ, CV_32S);
+            drawLines(display3d, landmarksXZ, true, 5);
+
+            // Left view
+            Mat landmarksYZ;
+            hconcat(landmarksWord.col(2), landmarksWord.col(1), landmarksYZ);
+            landmarksYZ.col(0) = -landmarksYZ.col(0);
+            x = landmarksYZ * 1000;
+            x.col(0) += 100;
+            x.col(1) += 300;
+            x.convertTo(landmarksYZ, CV_32S);
+            drawLines(display3d, landmarksYZ,  true, 5);
+
+            // Right view
+            Mat landmarksZY;
+            hconcat(landmarksWord.col(2), landmarksWord.col(1), landmarksZY);
+            x = landmarksZY * 1000;
+            x.col(0) += 300;
+            x.col(1) += 300;
+            x.convertTo(landmarksZY, CV_32S);
+            drawLines(display3d, landmarksZY, true, 5);
+            }
+
+
+
+ 
     }
     return pair<Mat, Mat>(displayScreen, display3d);
 }
@@ -648,6 +741,7 @@ int main(int argc, char** argv)
     while (waitKey(1) < 0)
     {
         cap >> frame;
+        frame = imread(samples::findFile(parser.get<String>("input")));
         if (frame.empty())
         {
             cout << "Frame is empty" << endl;
@@ -676,7 +770,7 @@ int main(int argc, char** argv)
         }
         tm.stop();
         // Draw results on the input image
-        pair<Mat, Mat> duoimg = visualize(frame, hands);
+        pair<Mat, Mat> duoimg = visualize(frame, hands, true);
         if (palms.rows == 0)
             cout << "No palm detected!";
         else
