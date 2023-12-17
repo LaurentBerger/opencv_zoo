@@ -5,6 +5,7 @@
 const long double _M_PI = 3.141592653589793238L;
 
 #include <opencv2/opencv.hpp>
+#include <opencv2/core/cvdef.h>
 
 using namespace std;
 using namespace cv;
@@ -16,6 +17,95 @@ vector< pair<dnn::Backend, dnn::Target> > backendTargetPairs = {
         std::make_pair<dnn::Backend, dnn::Target>(dnn::DNN_BACKEND_CUDA, dnn::DNN_TARGET_CUDA_FP16),
         std::make_pair<dnn::Backend, dnn::Target>(dnn::DNN_BACKEND_TIMVX, dnn::DNN_TARGET_NPU),
         std::make_pair<dnn::Backend, dnn::Target>(dnn::DNN_BACKEND_CANN, dnn::DNN_TARGET_NPU) };
+class MyImage2BlobParams : public Image2BlobParams
+{
+public:
+    MyImage2BlobParams(const Scalar& scalefactor, const Size& size = Size(), const Scalar& mean = Scalar(),
+        bool swapRB = false, int ddepth = CV_32F, DataLayout datalayout = DNN_LAYOUT_NCHW,
+        ImagePaddingMode mode = DNN_PMODE_NULL, Scalar borderValue = 0.0) :Image2BlobParams(scalefactor, size, mean, swapRB, ddepth, datalayout, mode, borderValue)
+    {
+    }
+
+    MyImage2BlobParams() :Image2BlobParams()
+    {
+    }
+
+    Rect MyImage2BlobParams::blobRectToImageRect(const Rect& r, const Size& oriImage)
+    {
+        CV_Assert(!oriImage.empty());
+        std::vector<Rect2d> rImg, rBlob;
+        rBlob.push_back(Rect2d(r));
+        rImg.resize(1);
+        this->blobRectsToImageRects(rBlob, rImg, oriImage);
+        return Rect(rImg[0]);
+    }
+
+    Rect2d MyImage2BlobParams::blobRectToImageRect(const Rect2d& r, const Size& oriImage)
+    {
+        CV_Assert(!oriImage.empty());
+        std::vector<Rect2d> rImg, rBlob;
+        rBlob.push_back(r);
+        rImg.resize(1);
+        this->blobRectsToImageRects(rBlob, rImg, oriImage);
+        return rImg[0];
+    }
+
+    void MyImage2BlobParams::blobRectsToImageRects(const std::vector<Rect>& rBlob, std::vector<Rect>& rImg, const Size& imgSize)
+    {
+        std::vector<Rect2d> rImg2d, rBlob2d;
+        rBlob2d.resize(rBlob.size());
+        for (int i = 0; i < rBlob.size(); i++)
+            rBlob2d[i] = Rect2d(rBlob[i]);
+        this->blobRectsToImageRects(rBlob2d, rImg2d, imgSize);
+        rImg.resize(rImg2d.size());
+        for (int i = 0; i < rImg2d.size(); i++)
+            rImg[i] = Rect(rImg2d[i]);
+    }
+
+
+    void MyImage2BlobParams::blobRectsToImageRects(const std::vector<Rect2d>& rBlob, std::vector<Rect2d>& rImg, const Size& imgSize)
+    {
+        Size size = this->size;
+        rImg.resize(rBlob.size());
+        if (size != imgSize)
+        {
+            if (this->paddingmode == DNN_PMODE_CROP_CENTER)
+            {
+                float resizeFactor = std::max(size.width / (float)imgSize.width,
+                    size.height / (float)imgSize.height);
+                for (int i = 0; i < rBlob.size(); i++)
+                {
+                    rImg[i] = Rect2d((rBlob[i].x + 0.5 * (imgSize.width * resizeFactor - size.width)) / resizeFactor, (rBlob[i].y + 0.5 * (imgSize.height * resizeFactor - size.height)) / resizeFactor,
+                        rBlob[i].width / resizeFactor, rBlob[i].height / resizeFactor);
+                }
+            }
+            else if (this->paddingmode == DNN_PMODE_LETTERBOX)
+            {
+                float resizeFactor = std::min(size.width / (float)imgSize.width,
+                    size.height / (float)imgSize.height);
+                int rh = int(imgSize.height * resizeFactor);
+                int rw = int(imgSize.width * resizeFactor);
+
+                int top = (size.height - rh) / 2;
+                int left = (size.width - rw) / 2;
+                for (int i = 0; i < rBlob.size(); i++)
+                {
+                    rImg[i] = Rect2d((rBlob[i].x - left) / resizeFactor, (rBlob[i].y - top) / resizeFactor, rBlob[i].width / resizeFactor, rBlob[i].height / resizeFactor);
+                }
+            }
+            else if (this->paddingmode == DNN_PMODE_NULL)
+            {
+                for (int i = 0; i < rBlob.size(); i++)
+                {
+                    rImg[i] = Rect2d(rBlob[i].x * (float)imgSize.width / size.width, rBlob[i].y * (float)imgSize.height / size.height,
+                        rBlob[i].width * (float)imgSize.width / size.width, rBlob[i].height * (float)imgSize.height / size.height);
+                }
+            }
+            else
+                CV_Error(-5, "Unknown padding mode");
+        }
+    }
+};
 
 class MPHandPose {
     Net net;
@@ -298,7 +388,7 @@ private:
     string modelPath;
     Size inputSize;
     Size originalSize;
-    Image2BlobParams paramMediapipe;
+    MyImage2BlobParams paramMediapipe;
     float scoreThreshold;
     float nmsThreshold;
     float topK;
@@ -384,7 +474,7 @@ public:
                    boxDelta.at<float>(row, 3));
             rBox[row] = r;
         }   
-        blobRectsToImageRects(rBox, rImg, this->originalSize, this->paramMediapipe);
+         this->paramMediapipe.blobRectsToImageRects(rBox, rImg, this->originalSize);
         vector< int > keep;
         NMSBoxes(rBox, scores, this->scoreThreshold, this->nmsThreshold, keep, 1.0f, this->topK);
         if (keep.size() == 0)
@@ -402,7 +492,7 @@ public:
                 Rect2d r(landMarkDelta.at<float>(idx, 2 * i) + this->anchors.at<float>(idx, 0) * this->inputSize.width,
                     landMarkDelta.at<float>(idx, 2 * i + 1) + this->anchors.at<float>(idx, 1) * this->inputSize.height,
                     1, 1);
-                r = blobRectToImageRect(r, this->originalSize, this->paramMediapipe);
+                r = this->paramMediapipe.blobRectToImageRect(r, this->originalSize);
                 result.at<float>(row, 4 + 2 * i) = r.x;
                 result.at<float>(row, 4 + 2 * i + 1) = r.y;
             }
